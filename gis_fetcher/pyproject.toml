@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gis-fetcher"
+version = "0.1.0"
+description = "Scalable, plugin-based framework for fetching live GIS data from multiple public APIs"
+requires-python = ">=3.9"
+dependencies = [
+    "aiohttp>=3.9",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+gis-fetch = "gis_fetcher.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gis_fetcher*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+.gis_cache/
+root-isotope-457419-b2-906d411ef4c7.json
+*.db
+*.json

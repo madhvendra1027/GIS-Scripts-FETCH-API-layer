@@ -1,0 +1,71 @@
+# Per-provider settings. Nothing here is required -- providers fall
+# back to sane defaults -- but this is where you tune retry/rate-limit
+# behavior or add API keys for sources that need them.
+
+providers:
+  weather:
+    max_retries: 3
+
+  earthquakes:
+    max_retries: 3
+    default_minmagnitude: 2.5
+    default_starttime: "2024-01-01"
+
+  osm:
+    max_retries: 2
+    min_interval_seconds: 2  # Overpass's public instance asks for politeness
+    default_tag: "amenity=hospital"
+
+  elevation:
+    max_retries: 3
+    cache_ttl_seconds: 7776000  # 90 days -- terrain is static
+
+  # --- Added for the 4-hazard field gap (see hazard_map.py) ---
+  # STATIC tier: slow-changing facts about a place. Long TTL so repeat
+  # zone checks are a cache hit instead of a fresh network call.
+  # 2026-09-18: switched from ISRIC's own REST API (now paused
+  # indefinitely) to Google Earth Engine's hosted SoilGrids mirror --
+  # needs a one-time GEE project/service-account setup, see
+  # gis_fetcher/providers/soil.py's module docstring and this repo's
+  # SESSIONS_README.md for the full walkthrough.
+  soil:
+    max_retries: 3
+    cache_ttl_seconds: 7776000  # 90 days
+    gee_service_account: "${GEE_SERVICE_ACCOUNT_EMAIL}"
+    gee_key_path: "${GEE_SERVICE_ACCOUNT_KEY_PATH}"
+
+  slope:
+    max_retries: 3
+    cache_ttl_seconds: 7776000  # 90 days
+
+  historical_events:
+    max_retries: 2
+    cache_ttl_seconds: 604800  # 7 days -- event counts don't change hourly
+
+  # DYNAMIC tier: changes hourly/daily, short TTL.
+  land_hydrology:
+    max_retries: 3
+    cache_ttl_seconds: 21600  # 6 hours (NASA POWER only updates ~daily anyway)
+
+  river_discharge:
+    max_retries: 3
+    cache_ttl_seconds: 10800  # 3 hours
+
+  marine:
+    max_retries: 3
+    cache_ttl_seconds: 21600  # 6 hours (Open-Meteo marine models update ~6h)
+
+  # Needs a free API key from https://agromonitoring.com (1,000 calls/day
+  # free tier -- plenty for a pilot). ${VAR} pulls from the environment at
+  # load time so keys never get committed to disk.
+  vegetation:
+    api_key: "${AGROMONITORING_API_KEY}"
+    max_retries: 2
+    cache_ttl_seconds: 345600  # 4 days -- satellite NDVI revisit is slow anyway
+
+  # Example of a provider that DOES need a key. ${VAR} pulls from the
+  # environment at load time so keys never get committed to disk.
+  # nasa_firms:
+  #   api_key: "${NASA_FIRMS_API_KEY}"
+  #   max_retries: 3
+  #   min_interval_seconds: 1

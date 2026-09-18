@@ -1,0 +1,8 @@
+aiohttp>=3.9
+PyYAML>=6.0
+
+# soil.py (soil_type_code, LANDSLIDE): queries Google Earth Engine's
+# hosted SoilGrids mirror since 2026-09-18, after ISRIC paused its own
+# REST API. Needs a one-time GEE service-account setup -- see soil.py's
+# module docstring.
+earthengine-api>=1.7

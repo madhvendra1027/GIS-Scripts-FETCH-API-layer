@@ -1,0 +1,166 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Disaster Relocation Dashboard (Demo)</title>
+<style>
+  html, body, #map { height: 100%; margin: 0; }
+  .legend { background: white; padding: 8px 12px; border-radius: 6px; font: 13px sans-serif; }
+  .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 2px; }
+  #map-error {
+    display: none; height: 100%; margin: 0; padding: 24px; box-sizing: border-box;
+    font: 14px/1.5 sans-serif; color: #a33; background: #fff3f3;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="map-error"></div>
+<script>
+// unpkg.com is where this page's Leaflet was loading from, and OSM's own tile
+// server (see the tileLayer() call below) was already 403'ing this app under
+// its tile usage policy -- on a network filtering one CDN it's common for
+// others to be filtered too. Rather than hard-fail on a single <script src>,
+// try a short list of independent CDNs in order and only give up if every one
+// of them fails, so a block on any single host doesn't blank the whole page.
+const LEAFLET_CSS_URLS = [
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css',
+];
+const LEAFLET_JS_URLS = [
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
+  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js',
+];
+
+function loadCss(urls) {
+  if (!urls.length) return; // best-effort; JS failing is what actually blocks the map
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = urls[0];
+  link.onerror = () => loadCss(urls.slice(1));
+  document.head.appendChild(link);
+}
+
+function loadJs(urls, onSuccess, onAllFailed) {
+  if (!urls.length) { onAllFailed(); return; }
+  const script = document.createElement('script');
+  script.src = urls[0];
+  script.onload = onSuccess;
+  script.onerror = () => loadJs(urls.slice(1), onSuccess, onAllFailed);
+  document.head.appendChild(script);
+}
+
+loadCss(LEAFLET_CSS_URLS);
+loadJs(LEAFLET_JS_URLS, initDashboard, () => {
+  document.getElementById('map').style.display = 'none';
+  const errDiv = document.getElementById('map-error');
+  errDiv.style.display = 'block';
+  errDiv.innerHTML =
+    '<b>Could not load the map library.</b><br>' +
+    'Tried unpkg.com, cdn.jsdelivr.net, and cdnjs.cloudflare.com for Leaflet and all three failed ' +
+    '-- this points to no internet access at all from this machine right now, or a network policy ' +
+    'blocking every CDN, rather than one blocked host.<br><br>' +
+    'To run fully offline: download leaflet.js/leaflet.css (+ its images/ folder) from ' +
+    '<a href="https://leafletjs.com/download.html">leafletjs.com/download.html</a> into ' +
+    'frontend/, and point the &lt;link&gt;/&lt;script&gt; tags in this file at those local paths ' +
+    'instead of a CDN.';
+});
+
+function initDashboard() {
+const API_BASE = 'http://127.0.0.1:8000';
+
+const COLOR_FOR = { RED: '#d9534f', YELLOW: '#f0ad4e', GREEN: '#5cb85c' };
+
+const map = L.map('map').setView([29.9680, 77.5460], 10); // Saharanpur, UP
+// tile.openstreetmap.org is 403'ing this app under OSM's tile usage policy
+// (osm.wiki/Blocked) -- that raw server is meant for light, one-off use, not
+// a page that gets reloaded repeatedly during dev/testing, and it blocks by
+// IP/User-Agent once it decides usage is too heavy; switching hosts is the
+// fix, not something to work around by retrying. CARTO's basemap tiles are
+// free for this kind of use (attribution required, which is included below)
+// and aren't subject to OSM's own tile policy since they're served from
+// CARTO's infrastructure, not OSM's.
+L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 20,
+}).addTo(map);
+
+const legend = L.control({ position: 'bottomright' });
+legend.onAdd = () => {
+  const div = L.DomUtil.create('div', 'legend');
+  div.innerHTML = Object.entries(COLOR_FOR)
+    .map(([label, color]) => `<span style="background:${color}"></span>${label}<br>`)
+    .join('');
+  return div;
+};
+legend.addTo(map);
+
+// Click anywhere on the map -> fully automated pipeline for that exact
+// point: no pre-defined zone list involved. GET /api/analyze-point
+// derives a zone on the fly around (lat, lng) (zones.zone_from_point on
+// the backend), live-fetches + normalizes + scores it, and returns the
+// same colored zone-status shape as a pre-computed zone. We drop a
+// colored marker as soon as it resolves, exactly like loadZoneMarker()
+// below does for pre-ingested zones -- the two code paths converge on
+// the same visual result.
+map.on('click', async (e) => {
+  const { lat, lng } = e.latlng;
+  const popup = L.popup().setLatLng(e.latlng).setContent('Fetching live data for this point…').openOn(map);
+  try {
+    const res = await fetch(`${API_BASE}/api/analyze-point?lat=${lat}&lon=${lng}&radius_km=5`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      popup.setContent(`Fetch failed: ${err.detail || res.statusText}`);
+      return;
+    }
+    const zone = await res.json();
+    popup.remove();
+    renderZoneMarker(zone, lat, lng);
+  } catch (err) {
+    popup.setContent('Fetch failed: ' + err);
+  }
+});
+
+// Shared rendering for both a fresh map click and a pre-computed zone
+// lookup (loadZoneMarker below) -- same response shape, same marker.
+function renderZoneMarker(zone, lat, lon) {
+  const color = COLOR_FOR[zone.zone_color] || '#999';
+  L.circleMarker([lat, lon], {
+    radius: 14,
+    color,
+    fillColor: color,
+    fillOpacity: 0.7,
+  })
+    .addTo(map)
+    .bindPopup(
+      `<b>${zone.zone_name || zone.zone_id}</b><br>` +
+      `Color: ${zone.zone_color}<br>` +
+      `Worst hazard: ${zone.worst_hazard}<br>` +
+      `Priority: ${zone.priority} (${zone.priority_score})`
+    )
+    .openPopup();
+}
+
+// Example: render an already-ingested zone (e.g. from a previous
+// pipeline_runner.py CLI run) via GET /api/zone-status/{zone_id}, for a
+// zone_id you already know rather than a fresh click.
+async function loadZoneMarker(zoneId, lat, lon) {
+  try {
+    const res = await fetch(`${API_BASE}/api/zone-status/${zoneId}`);
+    if (!res.ok) return; // no readings stored for this zone yet
+    const zone = await res.json();
+    renderZoneMarker({ ...zone, zone_name: zoneId }, lat, lon);
+  } catch (err) {
+    console.error('Zone status fetch failed for', zoneId, err);
+  }
+}
+
+// Example call once you've written readings for a real zone_id:
+// loadZoneMarker('Z-SAHARANPUR-01', 29.9680, 77.5460);
+}
+</script>
+</body>
+</html>
